@@ -1,0 +1,177 @@
+---
+title: "Analysis of NWS Data on Health and Economic Impacts of Weather Events"
+author: "M. Sieviec"
+date: "August 8, 2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setoptions,echo=F,warning=F,message=F}
+library(knitr)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+opts_chunk$set(echo=TRUE,results='markup')
+```
+
+##Synopsis
+Data over the time period 1950-2011 in the United States from the US National 
+Weather Service ([documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)) was analyzed to find the weather events that have the worst 
+health and economic outcomes. For the former category, the variables for event types, 
+fatalities, and injuries were isolated, then each summed according to the event type and the data were merged into a table along with each events' overall total. For the latter category, the variables for event type, crop damage, property damage, and monetary scalars (thousands, millions, billions) were isolated. These were summed by event type and monetary scalar, with thousands and millions being converted into billions for easier summation. Overall totals were then calculated by combining property and crop damage for each event type. It was found that the worst events for overall health and economic outcomes were tornadoes and floods, respectively.
+
+##Data Processing
+###Health Outcomes
+First, the data were loaded into RStudio and the variable names cleaned up:
+
+
+```{r cache=TRUE}
+data <- read.csv("repdata_data_StormData.csv",header=TRUE)
+names(data) <- tolower(gsub('_','',names(data)))
+```
+
+
+The first subset was selected as the data for health outcomes. Included were event type ("evtype"), injuries, and fatalities.
+
+
+```{r}
+data0 <- data[,c("fatalities","injuries","evtype")]
+```
+
+
+Upon inspection it was found that there were many duplicate event types as a result of typographical errors. For our purposes, there were so many that no attempt was made to correct or merge any of the types as the correct designations contained the overwhelming number of measurements.
+
+Separate tables for total injuries and fatalities by event type were created using *tapply*, and the subsequent tables were reshaped using *melt*, with the variable names then corrected.
+
+
+```{r}
+injtable <- with(data0,tapply(injuries,evtype,sum,na.rm=TRUE))
+meltedinj <- melt(injtable)
+names(meltedinj) <- c("event.type","injuries")
+
+fattable <- with(data0,tapply(fatalities,evtype,sum,na.rm=TRUE))
+meltedfat <- melt(fattable)
+names(meltedfat) <- c("event.type","fatalities")
+```
+
+
+These tables were then merged and a *total* variable added via the sum of fatalities and injuries for each event. The data were then re-ordered by decreasing total, and the 10 most impactful event types selected.
+
+
+```{r message=FALSE}
+mergedhum <- merge(meltedfat,meltedinj,by="event.type")
+mergedhum$total <- mergedhum$fatalities + mergedhum$injuries
+mergedhum <- mergedhum[order(mergedhum$total,decreasing = T),]
+mergedhum <- mergedhum[1:10,1:3] %>% melt()
+```
+
+###Economic Outcomes
+
+The second subset was selected as the data for economic outcomes. Included were the variables for event type ("evtype"), crop damage (in USD, "cropdmg"), property damage (in USD, "propdmg"), and the monetary scales for crop and property damage ("cropdmgexp" and "propdmgexp", respectively).
+
+
+```{r}
+data1 <- data[,c("cropdmg","cropdmgexp","propdmg","propdmgexp","evtype")]
+```
+
+
+Separate tables for property and crop damage by event type and monetary scale were then compiled:
+
+
+```{r}
+propdmgdat <- with(data1,tapply(propdmg,list(evtype,propdmgexp),sum,na.rm=T))
+cropdmgdat <- with(data1,tapply(cropdmg,list(evtype,cropdmgexp),sum,na.rm=T))
+```
+
+
+Monetary scale types accounted for in the documentation are: K - thousands, M - Millions, B - billions. Upon inspection of these tables, it was found that most of the monetary scale types in the original data were not of these 3. Of note were 'k' and 'm', likely intended as 'K' and 'M' but entered incorrectly.
+
+These undefined scale types--including 'k' and 'm'--were ignored as they were overwhelmingly composed of NA values shown below, with the exception of the blank type (possible explanations for a blank type are missing scale, which makes the data not useful, or it represents pure dollar amount, in which case the amounts would be too small to consider for our purposes). Below is the composition of the monetary scales for propdmgexp (results for cropdmgexp were similar):
+
+
+```{r}
+colMeans(is.na(propdmgdat))
+```
+
+
+For each subset, thousands and millions were scaled to billions and *rowSums* was used to find the total monetary sum for each event. The resulting tables were reshaped using *melt* and then re-ordered by decreasing total.
+
+
+```{r}
+propdmgdat <- propdmgdat[,c(14,17,19)]
+propdmgdat[,"K"] <- propdmgdat[,"K"] * 10^-6
+propdmgdat[,"M"] <- propdmgdat[,"M"] * 10^-3
+totalpropdmg <- rowSums(propdmgdat,na.rm=T)
+totalpropdmg <- totalpropdmg[order(totalpropdmg,decreasing = T)] %>% melt()
+
+cropdmgdat <- cropdmgdat[,c(5,7,9)]
+cropdmgdat[,"K"] <- cropdmgdat[,"K"] * 10^-6
+cropdmgdat[,"M"] <- cropdmgdat[,"M"] * 10^-3
+totalcropdmg <- rowSums(cropdmgdat,na.rm=T)
+totalcropdmg <- totalcropdmg[order(totalcropdmg,decreasing = T)] %>% melt()
+```
+
+
+These subsets were then merged by event type, and a *total* column added consisting of the sum of property and crop damage for each event type. The data were re-ordered by descreaing total a final time and all numeric values rounded to one decimal place. Finally, the ten highest impact event types were selected.
+
+
+```{r message=FALSE}
+mergeddmg <- merge(totalcropdmg,totalpropdmg,by="row.names")
+names(mergeddmg) <- c("event.type","crop.damage","property.damage")
+mergeddmg$total <- mergeddmg$crop.damage + mergeddmg$property.damage
+mergeddmg <- mergeddmg[order(mergeddmg$total,decreasing = T),]
+mergeddmg <- mergeddmg[1:10,1:3] %>% melt()
+```
+
+## Results
+###Health Outcomes
+
+The ten most impactful event types are graphed below. We see that tornadoes are by far the most impactful event type on human health across all categories. The second and third most impactful were excessive heat and thunderstorm wind.
+
+
+```{r fig.align='center',echo=FALSE}
+humplot <- ggplot(data=mergedhum,aes(x=as.factor(event.type),y=value))
+humplot + theme(axis.text.x=element_text(angle=45, hjust=1),
+                panel.background = element_blank(),
+                axis.line = element_line(colour = "black")) + 
+    geom_bar(stat="identity",aes(fill=variable)) +
+    xlab("Event Type") + 
+    ylab("Total") +
+    ggtitle("Figure 1: Total Health Impact by Event Type") +
+    scale_fill_manual(values=c("#7F0000","#EF6548"),
+                      name="Health Effect",
+                        breaks=levels(mergedhum$variable),
+                        labels=c("Fatalities","Injuries"))
+```
+
+
+###Economic Outcomes
+
+The ten most economically impactful event types are graphed below. We see that floods are far and away the most damaging of all event types, though droughts cause more damage to crops. The second and third most impactful overall were hurricanes/typhoons and tornadoes.
+
+```{r fig.align='center',echo=FALSE}
+dmgplot <- ggplot(data=mergeddmg,aes(x=as.factor(event.type),y=value))
+dmgplot + theme(axis.text.x=element_text(angle=45, hjust=1),
+                panel.background = element_blank(),
+                axis.line = element_line(colour = "black")) + 
+    geom_bar(stat="identity",aes(fill=variable)) +
+    xlab("Event Type") + 
+    ylab("Damage (billions USD)") +
+    ggtitle("Figure 2: Total Economic Impact by Event Type") +
+    scale_fill_manual(values=c("#7BCCC4","#0868AC"),
+                      name="Type of Damage",
+                        breaks=levels(mergeddmg$variable),
+                        labels=c("Crop","Property"))
+```
+
+##Notes
+
+This analysis was generated using OSX 10.13.5 (17F77), RStudio v1.1.453 and the 
+following packages:
+
+* knitr v1.20
+* reshape2 v1.4.3
+* dplyr v0.7.6
+* ggplot2 v3.0.0
+
